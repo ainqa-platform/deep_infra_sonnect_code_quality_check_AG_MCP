@@ -47,9 +47,66 @@ try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
     console.log(`✅ Successfully updated Antigravity MCP configuration!`);
     console.log(`   Config file: ${CONFIG_FILE}`);
-    console.log(`   Added server: 'deepinfra-code-quality'`);
-    console.log(`\n⚠️  IMPORTANT: Please ensure you replace 'your-api-key-here' in ${CONFIG_FILE}`);
-    console.log(`   with your actual DeepInfra API key if you haven't already.`);
 } catch (e) {
     console.error(`❌ Failed to write to mcp_config.json: ${e.message}`);
 }
+
+// ============================================================================
+// Configure VSCode (Cline / Roo Cline)
+// ============================================================================
+function getVSCodeGlobalStorageDir() {
+    const platform = os.platform();
+    const home = os.homedir();
+    
+    if (platform === 'darwin') {
+        return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'globalStorage');
+    } else if (platform === 'win32') {
+        const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+        return path.join(appData, 'Code', 'User', 'globalStorage');
+    } else {
+        return path.join(home, '.config', 'Code', 'User', 'globalStorage');
+    }
+}
+
+const globalStorageDir = getVSCodeGlobalStorageDir();
+const VSCODE_CLINE_DIR = path.join(globalStorageDir, 'saoudrizwan.claude-dev', 'settings');
+const VSCODE_ROO_DIR = path.join(globalStorageDir, 'rooveterinaryinc.roo-cline', 'settings');
+
+const setupVSCodeConfig = (settingsDir, extensionName) => {
+    if (!fs.existsSync(settingsDir)) {
+        try {
+            fs.mkdirSync(settingsDir, { recursive: true });
+        } catch (e) {
+            return; // Extension might not be installed, skip silently
+        }
+    }
+
+    const clineConfigFile = path.join(settingsDir, 'cline_mcp_settings.json');
+    let clineConfig = { mcpServers: {} };
+
+    if (fs.existsSync(clineConfigFile)) {
+        try {
+            const fileContent = fs.readFileSync(clineConfigFile, 'utf8');
+            clineConfig = JSON.parse(fileContent);
+            if (!clineConfig.mcpServers) clineConfig.mcpServers = {};
+        } catch (e) {
+            console.error(`❌ Error parsing existing ${extensionName} MCP config: ${e.message}`);
+        }
+    }
+
+    clineConfig.mcpServers['deepinfra-code-quality'] = config.mcpServers['deepinfra-code-quality'];
+
+    try {
+        fs.writeFileSync(clineConfigFile, JSON.stringify(clineConfig, null, 2), 'utf8');
+        console.log(`✅ Successfully updated VSCode ${extensionName} MCP configuration!`);
+        console.log(`   Config file: ${clineConfigFile}`);
+    } catch (e) {
+        console.error(`❌ Failed to write to ${extensionName} config: ${e.message}`);
+    }
+};
+
+setupVSCodeConfig(VSCODE_CLINE_DIR, 'Cline (Claude Dev)');
+setupVSCodeConfig(VSCODE_ROO_DIR, 'Roo Cline');
+
+console.log(`\n⚠️  IMPORTANT: Please ensure you replace 'your-api-key-here' in the config files`);
+console.log(`   with your actual DeepInfra API key if you haven't already.`);
