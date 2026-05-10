@@ -1,134 +1,101 @@
-# 🔍 Repository Audit Workflow
+# 🔍 Repository Audit CLI Workflow (`diq`)
 
-> Automated code quality audit: enter a repo → create a branch → scan files → generate a fix report.
+> The `diq` CLI allows you to run an automated code quality audit inside any repository.
+> It creates a customizable prompt, scans your code files, and generates a detailed fix report.
 
 ---
 
 ## Quick Start
 
-```bash
-# Dry run — see what files would be analyzed
-npm run audit-repo -- /path/to/your-repo --dry-run
+Assuming you have run `./install.sh` from the root of the toolkit.
 
-# Full audit with default prompt
-npm run audit-repo -- /path/to/your-repo
+1. **Go to your target repository**:
+   ```bash
+   cd /path/to/your-repo
+   git checkout -b quality-audit
+   ```
 
-# Security-focused audit on a custom branch
-npm run audit-repo -- /path/to/your-repo --prompt security --branch security-audit
+2. **Initialize the audit**:
+   ```bash
+   diq init
+   ```
+   *This creates `PROMPT.md` and an empty `CODE_QUALITY_REPORT.md`.*
 
-# Infrastructure review for Ansible/Terraform repos
-npm run audit-repo -- /path/to/your-repo --prompt infrastructure
-```
+3. **Customize your prompt**:
+   Open `PROMPT.md` in your text editor and modify the instructions to tell DeepInfra exactly what coding standards to enforce.
 
----
-
-## How It Works
-
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  Enter Repo  │───▶│Create Branch │───▶│ Scan Files   │───▶│  DeepInfra   │───▶│ MD Report    │
-│              │    │              │    │              │    │  Analysis    │    │              │
-│ cd <repo>    │    │ git checkout │    │ git ls-files │    │ per file     │    │ CODE_QUALITY │
-│              │    │ -b audit     │    │ → filter ext │    │ with prompt  │    │ _REPORT.md   │
-└──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
-```
-
-### Step-by-step:
-
-1. **Enter the repository** — provide the absolute path
-2. **Create a git branch** — isolates the audit (default: `code-quality-audit`)
-3. **Discover files** — uses `git ls-files` to find tracked code files
-4. **Load prompt template** — applies your custom prompt with placeholders filled in
-5. **Analyze each file** — sends code + prompt to DeepInfra API
-6. **Generate report** — writes `CODE_QUALITY_REPORT.md` in the repo root
+4. **Run the audit**:
+   ```bash
+   diq run
+   ```
+   *This scans all files and writes the findings into `CODE_QUALITY_REPORT.md`.*
 
 ---
 
-## Command Reference
+## `diq init` Commands
 
-```
-node scripts/audit-repo.js <repo-path> [options]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `<repo-path>` | *(required)* | Absolute or relative path to the repo |
-| `--branch <name>` | `code-quality-audit` | Git branch to create for the audit |
-| `--prompt <template>` | `default` | Prompt template name or file path |
-| `--extensions <list>` | `ts,js,py,yml,yaml,...` | Comma-separated file extensions to scan |
-| `--output <path>` | `<repo>/CODE_QUALITY_REPORT.md` | Where to save the report |
-| `--max-files <n>` | `50` | Maximum files to analyze |
-| `--skip-branch` | `false` | Skip git branch creation |
-| `--dry-run` | `false` | List files without calling the API |
-
----
-
-## Prompt Templates
-
-### Built-in Templates
-
-| Template | File | Best For |
-|----------|------|----------|
-| `default` | `prompts/default.md` | General code quality (readability, bugs, security, performance) |
-| `security` | `prompts/security.md` | OWASP Top 10 / CWE security audit |
-| `infrastructure` | `prompts/infrastructure.md` | Ansible, Terraform, IaC review |
-
-### Placeholders
-
-Every prompt template supports these placeholders — they are auto-filled at runtime:
-
-| Placeholder | Description | Example Value |
-|-------------|-------------|---------------|
-| `{{PROJECT_NAME}}` | Repository folder name | `AINQA_SharePoint` |
-| `{{FILE_PATH}}` | Relative path to the file | `roles/sharepoint_product/tasks/main.yml` |
-| `{{LANGUAGE}}` | Detected programming language | `yaml`, `typescript`, `python` |
-| `{{REVIEW_TYPE}}` | Name of the prompt template used | `default`, `security`, `infrastructure` |
-| `{{FILE_CONTENT}}` | Full contents of the file | *(auto-injected)* |
-
-### Creating Your Own Template
-
-1. Create a `.md` file anywhere (e.g., `prompts/my-team.md`)
-2. Use the placeholders above
-3. Pass it with `--prompt`:
+The `init` step supports built-in templates to get you started faster.
 
 ```bash
-# Using a built-in name
-npm run audit-repo -- /path/to/repo --prompt security
+# Default prompt (General code quality)
+diq init
 
-# Using a custom file path
-npm run audit-repo -- /path/to/repo --prompt ./prompts/my-team.md
+# Security-focused audit (OWASP Top 10)
+diq init --prompt security
 
-# Using an absolute path
-npm run audit-repo -- /path/to/repo --prompt /Users/me/custom-prompt.md
+# Infrastructure review (Ansible, Terraform, IaC)
+diq init --prompt infrastructure
+
+# Point to a custom prompt template file somewhere else
+diq init --prompt /path/to/my-custom-template.md
 ```
 
-### Example: Custom Team Standards Template
+You can also restrict what extensions are scanned when initializing the report skeleton:
+```bash
+diq init --extensions ts,js,tsx
+```
 
-Create `prompts/ainqa-standards.md`:
+---
+
+## `diq run` Commands
+
+You can limit the scope of the run:
+
+```bash
+# Only run on specific extensions
+diq run --extensions py,yml
+
+# Limit the maximum number of files to process
+diq run --max-files 10
+```
+
+---
+
+## Placeholders in `PROMPT.md`
+
+When you run `diq init`, the `PROMPT.md` file contains several placeholders. Do not remove them; the `diq run` command dynamically replaces them for each file it processes.
+
+| Placeholder | Replaced With |
+|-------------|---------------|
+| `{{PROJECT_NAME}}` | The name of the repository folder |
+| `{{FILE_PATH}}` | The relative path to the current file being analyzed |
+| `{{LANGUAGE}}` | The detected language (e.g., yaml, python, typescript) |
+| `{{REVIEW_TYPE}}` | The name of the template used |
+| `{{FILE_CONTENT}}` | The full source code of the file |
+
+**Example of customizing `PROMPT.md`:**
 
 ```markdown
-You are a code reviewer enforcing AINQA engineering standards.
+You are a senior code reviewer. 
 
 **Project:** {{PROJECT_NAME}}
 **File:** {{FILE_PATH}}
 **Language:** {{LANGUAGE}}
 
-## AINQA Standards Checklist
-
-1. **Naming** — snake_case for variables, PascalCase for classes
-2. **Ansible Best Practices** — use `become` only when needed, always tag tasks
-3. **Variables** — no hardcoded values, use `defaults/` and `group_vars/`
-4. **Secrets** — must use ansible-vault, never plaintext
-5. **Documentation** — every role needs a README with variable docs
-6. **Error Handling** — use `failed_when`, `changed_when`, `ignore_errors` wisely
-7. **Idempotency** — tasks must be safe to re-run
-
-For each violation:
-- **Severity:** 🔴 Critical | 🟠 High | 🟡 Medium | 🟢 Low
-- **Rule:** Which standard was violated
-- **Location:** Task name or line
-- **Issue:** What's wrong
-- **Fix:** Corrected code
+## My Custom Team Standards Checklist:
+1. Make sure variable names are snake_case.
+2. Check that no API keys are hardcoded.
+3. Validate that error handling is robust.
 
 Code:
 \`\`\`{{LANGUAGE}}
@@ -136,115 +103,57 @@ Code:
 \`\`\`
 ```
 
-Then run:
-
-```bash
-npm run audit-repo -- /path/to/AINQA_SharePoint --prompt ./prompts/ainqa-standards.md
-```
-
 ---
 
-## Report Output
+## Example Output (`CODE_QUALITY_REPORT.md`)
 
-The generated `CODE_QUALITY_REPORT.md` looks like:
+Once `diq run` finishes, it populates the report:
 
 ```markdown
 # 📋 Code Quality Audit Report
 
 > **Project:** AINQA_SharePoint
-> **Branch:** `code-quality-audit`
-> **Prompt Template:** `infrastructure`
-> **Model:** `meta-llama/Meta-Llama-3.1-70B-Instruct`
-> **Files Analyzed:** 19
-> **Generated:** 2026-05-10 09:50:00 UTC
+> **Repository:** `/path/to/AINQA_SharePoint`
+> **Branch:** `quality-audit`
+> **Files Analyzed:** 19 / 19
+> **Status:** ✅ Complete
 
 ---
 
-## 1/19 — `deploy_product.yml`
-
-[... detailed review with findings ...]
+## Files Reviewed
+| # | File | Language | Status |
+|---|------|----------|--------|
+| 1 | `deploy_product.yml` | yaml | ✅ Reviewed |
 
 ---
 
-## 2/19 — `roles/sharepoint_product/tasks/columns.yml`
+## 1. `deploy_product.yml`
+> **Language:** yaml
 
-[... detailed review with findings ...]
+[... detailed AI review from DeepInfra ...]
 
 ---
 
 ## 📊 Audit Summary
 
-| Severity | Count |
-|----------|-------|
-| 🔴 Critical | 2 files with critical issues |
-| 🟠 High | 5 files with high issues |
-| 🟡 Medium | 8 files with medium issues |
-| 🟢 Low | 4 files with low/info issues |
+| Metric | Value |
+|--------|-------|
+| 🔴 Files with critical issues | 2 |
+| 🟠 Files with high issues | 5 |
+| 🟡 Files with medium issues | 8 |
+| 🟢 Files with low/info issues | 4 |
 ```
 
 ---
 
-## Real-World Examples
+## Environment Variables Requirement
 
-### Audit the SharePoint Ansible Repo
-
-```bash
-npm run audit-repo -- \
-  /Users/niyas-ainqa/Library/CloudStorage/OneDrive-Ainqa/AINQA_ITOPS_DevOPS/git_repo/AINQA_SharePoint \
-  --prompt infrastructure \
-  --branch infra-quality-audit \
-  --extensions yml,yaml
-```
-
-### Audit a Node.js/TypeScript Repo
+For `diq run` to work, the script needs access to your DeepInfra API key. 
+You can export it in your shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
-npm run audit-repo -- /path/to/node-app \
-  --prompt default \
-  --extensions ts,js,tsx,jsx \
-  --max-files 30
+export DEEPINFRA_API_KEY="your-api-key"
+export DEEPINFRA_MODEL="meta-llama/Meta-Llama-3.1-70B-Instruct"
 ```
 
-### Security Audit Before a Release
-
-```bash
-npm run audit-repo -- /path/to/production-api \
-  --prompt security \
-  --branch pre-release-security-audit \
-  --output ./security-report-v2.5.md
-```
-
-### Audit Multiple Repos (loop)
-
-```bash
-for repo in /path/to/repos/*/; do
-  echo "Auditing: $repo"
-  npm run audit-repo -- "$repo" --prompt default --skip-branch
-done
-```
-
----
-
-## Environment Variables
-
-Set these in `.env` or export them before running:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DEEPINFRA_API_KEY` | ✅ | Your DeepInfra API key |
-| `DEEPINFRA_MODEL` | No | Model to use (default: `Meta-Llama-3.1-70B-Instruct`) |
-| `DEEPINFRA_BASE_URL` | No | API base URL |
-| `MAX_FILE_SIZE_KB` | No | Skip files larger than this (default: 256) |
-
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| `DEEPINFRA_API_KEY not set` | Add to `.env` file or `export DEEPINFRA_API_KEY=...` |
-| `No files found` | Check `--extensions` matches your file types |
-| `File too large` | Increase `MAX_FILE_SIZE_KB` in `.env` |
-| `Git branch failed` | Ensure the repo is a git repo with no uncommitted changes |
-| `API rate limited (429)` | Script includes 500ms delays; increase if needed |
-| Report is empty | Check the `--dry-run` output first to verify file discovery |
+Alternatively, you can have a `.env` file in the folder where you run the command, but global export is usually easier.
