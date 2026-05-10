@@ -35,17 +35,7 @@ echo ""
 echo "You can now use the CLI from anywhere:"
 echo "  $ diq help"
 echo ""
-echo "To use the MCP server in Antigravity, add this to your ~/.gemini/antigravity/mcp_config.json:"
-echo "{"
-echo "  \"mcpServers\": {"
-echo "    \"deepinfra-code-quality\": {"
-echo "      \"command\": \"node\","
-echo "      \"args\": [\"$(pwd)/dist/server.js\"],"
-echo "      \"env\": {"
-echo "        \"DEEPINFRA_API_KEY\": \"your-api-key\","
-echo "        \"CODE_ROOT\": \"/path/to/your/code\""
-echo "      }"
-echo "    }"
-echo "  }"
-echo "}"
-echo ""
+
+# Automatically setup Antigravity MCP Config
+node scripts/setup-mcp.js
+
