@@ -37,6 +37,8 @@ const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || "";
 const DEEPINFRA_BASE_URL = process.env.DEEPINFRA_BASE_URL || "https://api.deepinfra.com/v1/openai";
 const DEEPINFRA_MODEL = process.env.DEEPINFRA_MODEL || "meta-llama/Meta-Llama-3.1-70B-Instruct";
 const MAX_FILE_SIZE_KB = Number(process.env.MAX_FILE_SIZE_KB || "256");
+const MAX_RETRIES = Number(process.env.MAX_RETRIES || "3");
+const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS || "800");
 
 // ── Language Detection ─────────────────────────────────────────────────────
 
@@ -73,6 +75,8 @@ function parseArgs() {
             case "--prompt":     opts.promptTemplate = args[++i]; break;
             case "--extensions": opts.extensions = args[++i]; break;
             case "--max-files":  opts.maxFiles = Number(args[++i]); break;
+            case "--delay":      opts.delay = Number(args[++i]); break;
+            case "--retries":    opts.retries = Number(args[++i]); break;
             case "--help":       opts.command = "help"; break;
         }
     }
@@ -169,26 +173,44 @@ function walkDir(baseDir, currentDir, exts, files, maxFiles, skipFiles) {
 
 // ── DeepInfra API ──────────────────────────────────────────────────────────
 
-async function callDeepInfra(prompt) {
-    const response = await fetch(`${DEEPINFRA_BASE_URL}/chat/completions`, {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${DEEPINFRA_API_KEY}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            model: DEEPINFRA_MODEL,
-            messages: [{ role: "user", content: prompt }],
-        }),
-    });
+async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
+    try {
+        const response = await fetch(`${DEEPINFRA_BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${DEEPINFRA_API_KEY}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model: DEEPINFRA_MODEL,
+                messages: [{ role: "user", content: prompt }],
+            }),
+        });
 
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`DeepInfra API ${response.status}: ${text.substring(0, 200)}`);
+        if (!response.ok) {
+            // Handle rate limiting (429) or server errors (5xx) with exponential backoff
+            if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
+                const backoff = Math.pow(2, retryCount) * 2000;
+                process.stdout.write(`(retry ${retryCount + 1}/${maxRetries} in ${backoff}ms)... `);
+                await new Promise(r => setTimeout(r, backoff));
+                return callDeepInfra(prompt, maxRetries, retryCount + 1);
+            }
+            const text = await response.text();
+            throw new Error(`DeepInfra API ${response.status}: ${text.substring(0, 200)}`);
+        }
+
+        const json = await response.json();
+        return json.choices?.[0]?.message?.content || "No response from DeepInfra.";
+    } catch (err) {
+        // Handle network errors (like "fetch failed") with retries
+        if (retryCount < maxRetries) {
+            const backoff = Math.pow(2, retryCount) * 2000;
+            process.stdout.write(`(network retry ${retryCount + 1}/${maxRetries} in ${backoff}ms)... `);
+            await new Promise(r => setTimeout(r, backoff));
+            return callDeepInfra(prompt, maxRetries, retryCount + 1);
+        }
+        throw err;
     }
-
-    const json = await response.json();
-    return json.choices?.[0]?.message?.content || "No response from DeepInfra.";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -357,13 +379,14 @@ async function cmdRun(opts) {
                 FILE_CONTENT: code,
             });
 
-            const review = await callDeepInfra(prompt);
+            const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
             results.push({ file, language, review, error: null });
             console.log("✅");
 
-            // Rate limiting
+            // Rate limiting / Throttling
+            const delay = opts.delay || REQUEST_DELAY_MS;
             if (i < files.length - 1) {
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, delay));
             }
         } catch (err) {
             console.log(`❌ ${err.message.substring(0, 60)}`);
@@ -487,6 +510,8 @@ Options for 'init':
 Options for 'run':
   --max-files <n>        Max files to analyze (default: 50)
   --extensions <list>    Comma-separated extensions (default: ts,js,py,yml,...)
+  --delay <ms>           Delay between requests in ms (default: 800)
+  --retries <n>          Number of retries for failed requests (default: 3)
 
 Environment:
   DEEPINFRA_API_KEY      Your DeepInfra API key (required for 'run')
