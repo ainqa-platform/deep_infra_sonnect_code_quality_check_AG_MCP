@@ -18,6 +18,7 @@
 
 import fs from "fs";
 import path from "path";
+import "dotenv/config";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 

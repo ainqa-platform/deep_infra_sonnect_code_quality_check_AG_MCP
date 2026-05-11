@@ -144,6 +144,27 @@ This document serves as a historical record of the changes, fixes, and architect
 
 ---
 
+## 🌍 Phase 9: Standardized Global Configuration
+
+**The Goal:** Ensure all configuration parameters are consistently handled and portable across the CLI, MCP Server, and Setup tools.
+
+### 1. Centralized Env Loading
+- Added `dotenv/config` to all scripts.
+- Standardized defaults across the repo (e.g., `MAX_FILE_SIZE_KB=512`).
+
+### 2. Full Parameter Pass-through
+- Expanded the `setup-mcp.js` script to inject the entire connection profile into AI agent configs:
+  - `DEEPINFRA_API_KEY`
+  - `DEEPINFRA_BASE_URL`
+  - `DEEPINFRA_MODEL`
+  - `CODE_ROOT`
+  - `MAX_FILE_SIZE_KB`
+  - `MAX_RETRIES`
+  - `REQUEST_DELAY_MS`
+- This ensures the AI agents inherit the exact same performance and connectivity settings as the local CLI.
+
+---
+
 ## 📝 Key Commands Used During Development
 
 Here are the commands used to build, test, and link the project:

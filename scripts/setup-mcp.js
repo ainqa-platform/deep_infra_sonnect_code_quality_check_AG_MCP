@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import 'dotenv/config';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,8 +39,12 @@ config.mcpServers['deepinfra-code-quality'] = {
     args: [SERVER_PATH],
     env: {
         DEEPINFRA_API_KEY: process.env.DEEPINFRA_API_KEY || 'your-api-key-here',
+        DEEPINFRA_BASE_URL: process.env.DEEPINFRA_BASE_URL || 'https://api.deepinfra.com/v1/openai',
         DEEPINFRA_MODEL: process.env.DEEPINFRA_MODEL || 'meta-llama/Meta-Llama-3.1-70B-Instruct',
-        CODE_ROOT: process.env.CODE_ROOT || os.homedir()
+        CODE_ROOT: process.env.CODE_ROOT || './',
+        MAX_FILE_SIZE_KB: process.env.MAX_FILE_SIZE_KB || '512',
+        MAX_RETRIES: process.env.MAX_RETRIES || '3',
+        REQUEST_DELAY_MS: process.env.REQUEST_DELAY_MS || '8000'
     }
 };
 
