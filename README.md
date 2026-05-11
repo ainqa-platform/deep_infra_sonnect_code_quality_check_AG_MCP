@@ -8,6 +8,8 @@ A powerful toolkit that provides AI-driven code quality reviews via DeepInfra. I
 
 ## 🚀 Installation
 
+### 🍎 macOS / 🐧 Linux
+
 We provide an automatic install script that sets up dependencies, builds the project, and links the CLI tool globally.
 
 ```bash
@@ -16,15 +18,43 @@ git clone https://github.com/ainqa-platform/deep_infra_sonnect_code_quality_chec
 cd deep_infra_sonnect_code_quality_check_AG_MCP
 
 # Run the install script
+chmod +x install.sh
 ./install.sh
+```
+
+### 🪟 Windows
+
+On Windows, you can use the provided `install.bat` or run the commands manually in **PowerShell** or **Command Prompt** as **Administrator**.
+
+#### Option A: Automatic (using `install.bat`)
+```powershell
+.\install.bat
+```
+
+#### Option B: Manual
+```powershell
+# 1. Install dependencies
+npm install
+
+# 2. Build the project
+npm run build
+
+# 3. Link CLI globally (requires Administrator)
+npm link
+
+# 4. Auto-configure MCP Settings
+node scripts/setup-mcp.js
 ```
 
 Ensure you have your environment variables set up (either exported in your shell or inside a `.env` file in the repo):
 
 ```bash
+# Unix
 cp .env.example .env
-# Edit .env and insert your DEEPINFRA_API_KEY
+# Windows
+copy .env.example .env
 ```
+
 
 ---
 
