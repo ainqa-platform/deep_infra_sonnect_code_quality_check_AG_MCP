@@ -117,6 +117,7 @@ You can register the same server multiple times with different configurations fo
 | `File not found` | Check that `CODE_ROOT` points to the correct parent directory |
 | `Access outside CODE_ROOT` | The file path must be within `CODE_ROOT` — use a broader root |
 | `File too large` | Increase `MAX_FILE_SIZE_KB` in the env block |
+| `Input too long` | Reduce `MAX_FILE_SIZE_KB` or use a model with a larger context |
 | `DeepInfra API error: 401` | Your API key is invalid — get a new one from [deepinfra.com](https://deepinfra.com) |
 | `DeepInfra API error: 429` | Rate limited — wait a moment and retry |
 | Tool not appearing in Antigravity | Rebuild (`npm run build`), verify `mcp_config.json`, restart Antigravity |

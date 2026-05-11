@@ -130,6 +130,20 @@ This document serves as a historical record of the changes, fixes, and architect
 
 ---
 
+## 📏 Phase 8: Context Window Management
+
+**The Goal:** Prevent "Input too long" errors when analyzing dense or oversized files.
+
+### 1. Smart Error Handling
+- Added specific detection for HTTP 400 "Input too long" errors from DeepInfra.
+- The tool now identifies these cases and provides a helpful error message suggesting a reduction in the file size limit, rather than wasting retries.
+
+### 2. Safer Defaults
+- Reduced the default `MAX_FILE_SIZE_KB` from **256KB** to **128KB**.
+- This ensures that most files (approx. 32k-50k tokens) fit comfortably within standard model context windows (like Llama 3.1 70B/405B) alongside the audit prompt.
+
+---
+
 ## 📝 Key Commands Used During Development
 
 Here are the commands used to build, test, and link the project:

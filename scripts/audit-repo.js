@@ -36,9 +36,9 @@ const REPORT_FILE = path.join(CWD, "CODE_QUALITY_REPORT.md");
 const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || "";
 const DEEPINFRA_BASE_URL = process.env.DEEPINFRA_BASE_URL || "https://api.deepinfra.com/v1/openai";
 const DEEPINFRA_MODEL = process.env.DEEPINFRA_MODEL || "meta-llama/Meta-Llama-3.1-70B-Instruct";
-const MAX_FILE_SIZE_KB = Number(process.env.MAX_FILE_SIZE_KB || "256");
+const MAX_FILE_SIZE_KB = Number(process.env.MAX_FILE_SIZE_KB || "512");
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || "3");
-const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS || "800");
+const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS || "8000");
 
 // ── Language Detection ─────────────────────────────────────────────────────
 
@@ -72,12 +72,12 @@ function parseArgs() {
 
     for (let i = 1; i < args.length; i++) {
         switch (args[i]) {
-            case "--prompt":     opts.promptTemplate = args[++i]; break;
+            case "--prompt": opts.promptTemplate = args[++i]; break;
             case "--extensions": opts.extensions = args[++i]; break;
-            case "--max-files":  opts.maxFiles = Number(args[++i]); break;
-            case "--delay":      opts.delay = Number(args[++i]); break;
-            case "--retries":    opts.retries = Number(args[++i]); break;
-            case "--help":       opts.command = "help"; break;
+            case "--max-files": opts.maxFiles = Number(args[++i]); break;
+            case "--delay": opts.delay = Number(args[++i]); break;
+            case "--retries": opts.retries = Number(args[++i]); break;
+            case "--help": opts.command = "help"; break;
         }
     }
 
@@ -188,6 +188,13 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
         });
 
         if (!response.ok) {
+            const text = await response.text();
+
+            // Special handling for "Input too long" - no point in retrying
+            if (response.status === 400 && text.includes("Input too long")) {
+                throw new Error(`File is too large for the model's context window. (Try reducing MAX_FILE_SIZE_KB)`);
+            }
+
             // Handle rate limiting (429) or server errors (5xx) with exponential backoff
             if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
                 const backoff = Math.pow(2, retryCount) * 2000;
@@ -195,7 +202,6 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
                 await new Promise(r => setTimeout(r, backoff));
                 return callDeepInfra(prompt, maxRetries, retryCount + 1);
             }
-            const text = await response.text();
             throw new Error(`DeepInfra API ${response.status}: ${text.substring(0, 200)}`);
         }
 
@@ -517,7 +523,7 @@ Environment:
   DEEPINFRA_API_KEY      Your DeepInfra API key (required for 'run')
   DEEPINFRA_MODEL        Model to use (default: meta-llama/Meta-Llama-3.1-70B-Instruct)
   DEEPINFRA_BASE_URL     API base URL
-  MAX_FILE_SIZE_KB       Skip files larger than this (default: 256)
+  MAX_FILE_SIZE_KB       Skip files larger than this (default: 512)
 `);
 }
 
