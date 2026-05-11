@@ -82,6 +82,24 @@ This document serves as a historical record of the changes, fixes, and architect
 
 ---
 
+## 🪟 Phase 5: Windows Platform Support
+
+**The Goal:** Ensure the toolkit works seamlessly in Windows IDE environments (VS Code) and terminals (PowerShell/CMD).
+
+### 1. Native Windows Installer (`install.bat`)
+- Created `install.bat` to provide a one-click setup for Windows users.
+- Handles Node/NPM checks, builds the project, links the global `diq` command, and runs the configuration script.
+- Replaces the need for `install.sh` on Windows systems.
+
+### 2. Cross-Platform Configuration Setup
+- Enhanced `scripts/setup-mcp.js` to handle `%APPDATA%` environment variables.
+- Verified that `diq` CLI works with Windows Git paths and PowerShell environments.
+
+### 3. Documentation Improvements
+- Updated `README.md` with explicit macOS/Linux vs Windows installation instructions.
+
+---
+
 ## 📝 Key Commands Used During Development
 
 Here are the commands used to build, test, and link the project:
@@ -93,6 +111,7 @@ Here are the commands used to build, test, and link the project:
 | `node dist/server.js` | Testing if the MCP server outputs proper JSON-RPC initialization. |
 | `npm link` | Linking the `diq` command to the user's global execution path. |
 | `chmod +x scripts/audit-repo.js` | Giving the Node CLI script execute permissions. |
+| `install.bat` | Native Windows installation script. |
 | `git ls-files --cached --others --exclude-standard` | Discovering files safely while respecting `.gitignore`. |
 | `git checkout -b <branch>` | Creating the isolated branch for audits. |
 
@@ -102,7 +121,8 @@ Here are the commands used to build, test, and link the project:
 
 ```
 .
-├── install.sh                  # One-click setup script
+├── install.sh                  # One-click setup script (macOS/Linux)
+├── install.bat                 # One-click setup script (Windows)
 ├── package.json                # Defines the 'diq' binary
 ├── scripts
 │   ├── audit-repo.js           # The 'diq' CLI core logic (init/run)
@@ -117,3 +137,4 @@ Here are the commands used to build, test, and link the project:
     ├── deepinfraClient.ts      # Fetch wrapper for DeepInfra API
     └── config.ts               # Env parsing & error logging
 ```
+
