@@ -100,6 +100,22 @@ This document serves as a historical record of the changes, fixes, and architect
 
 ---
 
+## 🛡️ Phase 6: Reliability & API Resilience
+
+**The Goal:** Resolve "fetch failed" errors and 429 Rate Limit issues when auditing large repositories (50+ files).
+
+### 1. Exponential Backoff Implementation
+- Modified `callDeepInfra` to catch network errors and HTTP 429/5xx statuses.
+- Implemented a retry mechanism with exponential backoff (2s, 4s, 8s).
+- Added real-time terminal feedback for retry attempts.
+
+### 2. Configurable Throttling
+- Added `--delay <ms>` CLI argument to allow users to manually slow down requests.
+- Added `--retries <n>` CLI argument to customize the resilience level.
+- Increased default request delay to 800ms to improve baseline stability.
+
+---
+
 ## 📝 Key Commands Used During Development
 
 Here are the commands used to build, test, and link the project:

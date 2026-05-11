@@ -67,7 +67,14 @@ diq run --extensions py,yml
 
 # Limit the maximum number of files to process
 diq run --max-files 10
+
+# Increase delay between requests if hitting rate limits (ms)
+diq run --delay 1000
+
+# Customize retry count for failed requests
+diq run --retries 5
 ```
+
 
 ---
 
