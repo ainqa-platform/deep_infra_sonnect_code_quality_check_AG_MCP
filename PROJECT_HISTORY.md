@@ -139,7 +139,7 @@ This document serves as a historical record of the changes, fixes, and architect
 - The tool now identifies these cases and provides a helpful error message suggesting a reduction in the file size limit, rather than wasting retries.
 
 ### 2. Safer Defaults
-- Reduced the default `MAX_FILE_SIZE_KB` from **256KB** to **128KB**.
+- Reduced the default `MAX_FILE_SIZE_KB` from **256KB** to **512KB**.
 - This ensures that most files (approx. 32k-50k tokens) fit comfortably within standard model context windows (like Llama 3.1 70B/405B) alongside the audit prompt.
 
 ---
