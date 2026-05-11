@@ -67,7 +67,7 @@ function parseArgs() {
         command,
         promptTemplate: "default",
         extensions: "ts,js,py,yml,yaml,tf,sh,go,java,rb,rs,tsx,jsx,css,html,vue,svelte",
-        maxFiles: 50,
+        maxFiles: 500,
     };
 
     for (let i = 1; i < args.length; i++) {
@@ -508,7 +508,7 @@ Options for 'init':
   --extensions <list>    Comma-separated extensions (default: ts,js,py,yml,...)
 
 Options for 'run':
-  --max-files <n>        Max files to analyze (default: 50)
+  --max-files <n>        Max files to analyze (default: 500)
   --extensions <list>    Comma-separated extensions (default: ts,js,py,yml,...)
   --delay <ms>           Delay between requests in ms (default: 800)
   --retries <n>          Number of retries for failed requests (default: 3)

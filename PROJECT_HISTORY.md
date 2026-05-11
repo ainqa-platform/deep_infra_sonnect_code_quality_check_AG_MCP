@@ -116,6 +116,20 @@ This document serves as a historical record of the changes, fixes, and architect
 
 ---
 
+## 📈 Phase 7: Large Scale Audit Support
+
+**The Goal:** Support comprehensive audits for large enterprise projects with hundreds of source files.
+
+### 1. Default Limit Increase
+- Increased the default file scanning limit from **50** to **500** files.
+- This allows for full repository coverage in complex microservices and monorepos without requiring manual flags.
+
+### 2. Documentation Sync
+- Updated CLI help text and workflow documentation to reflect the new default capacity.
+- Verified that the report generation handles the increased volume of findings gracefully.
+
+---
+
 ## 📝 Key Commands Used During Development
 
 Here are the commands used to build, test, and link the project:
