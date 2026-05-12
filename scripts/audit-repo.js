@@ -14,6 +14,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import crypto from "crypto";
 import dotenv from "dotenv";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -78,6 +79,22 @@ function detectLanguage(filePath) {
     return LANG_MAP[ext] || "text";
 }
 
+function stripBoilerplate(code, language) {
+    if (language.toLowerCase() !== "java") return code;
+    
+    // For Java: strip imports and package declarations to save tokens
+    // Also strip large header comments (licenses)
+    const lines = code.split("\n");
+    const filtered = lines.filter(line => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("package ")) return false;
+        if (trimmed.startsWith("import ")) return false;
+        return true;
+    });
+
+    return filtered.join("\n").trim();
+}
+
 // ── Argument Parsing ───────────────────────────────────────────────────────
 
 function parseArgs() {
@@ -102,6 +119,8 @@ function parseArgs() {
             case "--output": opts.output = args[++i]; break;
             case "--fail-on": opts.failOn = args[++i]; break; // critical | high | medium | low
             case "--resume": opts.resume = true; break;
+            case "--force": opts.force = true; break; // Bypass hash cache
+            case "--logic-only": opts.logicOnly = true; break; // Strip boilerplate
             case "--help": opts.command = "help"; break;
         }
     }
@@ -444,15 +463,21 @@ async function cmdRun(opts) {
         try {
             const state = JSON.parse(fs.readFileSync(resumePath, "utf8"));
             if (state.projectName === projectName && state.branch === branch) {
-                console.log(`  🔄 Resuming audit: loading ${state.results.length} previous results...`);
+                console.log(`  🔄 Loading cache: ${state.results.length} files tracked...`);
                 results.push(...state.results);
             }
+        } catch (e) { /* ignore */ }
+    } else if (fs.existsSync(resumePath)) {
+        // Even if not --resume, we load the state to check hashes for incremental audit
+        try {
+            const state = JSON.parse(fs.readFileSync(resumePath, "utf8"));
+            results.push(...state.results);
         } catch (e) { /* ignore */ }
     }
 
     let filesToProcess = [...files];
     let pass = 1;
-    const MAX_PASSES = 2; // Initial pass + 1 cleanup pass
+    const MAX_PASSES = 2;
 
     while (filesToProcess.length > 0 && pass <= MAX_PASSES) {
         const isCleanup = pass > 1;
@@ -464,17 +489,19 @@ async function cmdRun(opts) {
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
-            
-            // Skip if not in the current process list
             if (!filesToProcess.includes(file)) continue;
 
             const absPath = path.join(CWD, file);
             const language = detectLanguage(file);
+            const code = fs.readFileSync(absPath, "utf8");
+            const currentHash = getFileHash(code);
 
-            // Check if already analyzed successfully in a previous resume
+            // ── Incremental Audit Logic ──
             const existing = results.find(r => r.file === file);
-            if (opts.resume && existing && !existing.error && !isCleanup) {
-                console.log(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} ⏩ Skipped`);
+            if (!opts.force && existing && !existing.error && existing.hash === currentHash && !isCleanup) {
+                if (opts.resume) {
+                    console.log(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} ⏩ Cached`);
+                }
                 filesToProcess = filesToProcess.filter(f => f !== file);
                 continue;
             }
@@ -482,12 +509,16 @@ async function cmdRun(opts) {
             process.stdout.write(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} `);
 
             try {
-                const code = fs.readFileSync(absPath, "utf8");
+                let codeToReview = code;
+                if (opts.logicOnly) {
+                    codeToReview = stripBoilerplate(code, language);
+                }
+
                 const prompt = renderPrompt(promptTemplate, {
                     PROJECT_NAME: projectName,
                     FILE_PATH: file,
                     LANGUAGE: language,
-                    FILE_CONTENT: code,
+                    FILE_CONTENT: codeToReview,
                 });
 
                 let review;
@@ -504,18 +535,20 @@ async function cmdRun(opts) {
                 if (existing) {
                     existing.review = review;
                     existing.error = null;
+                    existing.hash = currentHash;
                 } else {
-                    results.push({ file, language, review, error: null });
+                    results.push({ file, language, review, error: null, hash: currentHash });
                 }
                 console.log("✅");
             } catch (err) {
                 console.log(`❌ ${err.message}`);
                 if (existing) {
                     existing.error = err.message;
+                    existing.hash = currentHash;
                 } else {
-                    results.push({ file, language, review: "", error: err.message });
+                    results.push({ file, language, review: "", error: err.message, hash: currentHash });
                 }
-                nextPassFiles.push(file); // Keep for next pass
+                nextPassFiles.push(file);
             }
 
             // Incremental save
@@ -595,6 +628,8 @@ Commands:
 
 Options for 'run':
   --resume               Skip already analyzed files from a previous run
+  --force                Bypass cache and re-analyze all files
+  --logic-only           Strip imports/boilerplate to save tokens (Java)
   --format <type>        markdown | junit | json (default: markdown)
   --fail-on <level>      critical | high | medium | low
   --output <file>        Custom report filename
