@@ -153,14 +153,14 @@ Once `diq run` finishes, it populates the report:
 
 ---
 
-## Environment Variables Requirement
+## API Key & Configuration
 
-For `diq run` to work, the script needs access to your DeepInfra API key. 
-You can export it in your shell profile (`~/.zshrc` or `~/.bashrc`):
+For `diq run` to work, the script needs access to your DeepInfra API key. It searches for configuration in the following order:
 
-```bash
-export DEEPINFRA_API_KEY="your-api-key"
-export DEEPINFRA_MODEL="meta-llama/Meta-Llama-3.1-70B-Instruct"
-```
+1. **Current Directory**: A `.env` file in the folder where you are running the command.
+2. **Global Environment**: Variables exported in your shell (e.g., `export DEEPINFRA_API_KEY="..."`).
+3. **Toolkit Directory**: The `.env` file located in the toolkit's installation folder (where you ran `./install.sh`).
+4. **Antigravity Config**: Your global `~/.gemini/antigravity/mcp_config.json` file (in the `env` block of the `deepinfra-code-quality` server).
 
-Alternatively, you can have a `.env` file in the folder where you run the command, but global export is usually easier.
+**Tip:** Setting your key once in the toolkit's `.env` or the Antigravity config is the easiest way to make `diq` work globally without needing to create a `.env` file in every project.
+

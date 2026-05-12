@@ -4,4 +4,6 @@ export declare const CONFIG: {
     deepinfraModel: string;
     codeRoot: string;
     maxFileSizeKb: number;
+    maxRetries: number;
+    requestDelayMs: number;
 };

@@ -18,7 +18,8 @@
 
 import fs from "fs";
 import path from "path";
-import "dotenv/config";
+import os from "os";
+import dotenv from "dotenv";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
@@ -32,7 +33,33 @@ const CWD = process.cwd(); // The repo the user is standing in
 const PROMPT_FILE = path.join(CWD, "PROMPT.md");
 const REPORT_FILE = path.join(CWD, "CODE_QUALITY_REPORT.md");
 
-// ── Config ─────────────────────────────────────────────────────────────────
+// ── Config & Environment ──────────────────────────────────────────────────
+
+// 1. Load from CWD .env (where the user is auditing)
+dotenv.config({ path: path.join(CWD, ".env") });
+
+// 2. Load from MCP_ROOT .env (where the toolkit lives) as fallback
+if (!process.env.DEEPINFRA_API_KEY) {
+    dotenv.config({ path: path.join(MCP_ROOT, ".env") });
+}
+
+// 3. Load from ~/.gemini/antigravity/mcp_config.json as fallback
+if (!process.env.DEEPINFRA_API_KEY) {
+    const configPath = path.join(os.homedir(), ".gemini", "antigravity", "mcp_config.json");
+    if (fs.existsSync(configPath)) {
+        try {
+            const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+            const serverConfig = config.mcpServers?.["deepinfra-code-quality"];
+            if (serverConfig?.env?.DEEPINFRA_API_KEY) {
+                process.env.DEEPINFRA_API_KEY = serverConfig.env.DEEPINFRA_API_KEY;
+                if (!process.env.DEEPINFRA_MODEL) process.env.DEEPINFRA_MODEL = serverConfig.env.DEEPINFRA_MODEL;
+                if (!process.env.DEEPINFRA_BASE_URL) process.env.DEEPINFRA_BASE_URL = serverConfig.env.DEEPINFRA_BASE_URL;
+            }
+        } catch (e) {
+            // Silently ignore config parse errors
+        }
+    }
+}
 
 const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || "";
 const DEEPINFRA_BASE_URL = process.env.DEEPINFRA_BASE_URL || "https://api.deepinfra.com/v1/openai";
