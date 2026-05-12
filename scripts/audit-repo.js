@@ -413,63 +413,80 @@ async function cmdRun(opts) {
                 console.log(`  🔄 Resuming audit: loading ${state.results.length} previous results...`);
                 results.push(...state.results);
             }
-        } catch (e) {
-            console.warn("  ⚠️  Failed to load resume state. Starting fresh.");
-        }
+        } catch (e) { /* ignore */ }
     }
 
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const absPath = path.join(CWD, file);
-        const language = detectLanguage(file);
+    let filesToProcess = [...files];
+    let pass = 1;
+    const MAX_PASSES = 2; // Initial pass + 1 cleanup pass
 
-        // Check if already analyzed (and not an error)
-        const existing = results.find(r => r.file === file);
-        if (opts.resume && existing && !existing.error) {
-            console.log(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} ⏩ Skipped (already analyzed)`);
-            continue;
+    while (filesToProcess.length > 0 && pass <= MAX_PASSES) {
+        const isCleanup = pass > 1;
+        if (isCleanup) {
+            console.log(`\n  🔄 Pass ${pass}: Retrying ${filesToProcess.length} failed files...\n`);
         }
 
-        process.stdout.write(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} `);
+        const nextPassFiles = [];
 
-        try {
-            const code = fs.readFileSync(absPath, "utf8");
-            const prompt = renderPrompt(promptTemplate, {
-                PROJECT_NAME: projectName,
-                FILE_PATH: file,
-                LANGUAGE: language,
-                FILE_CONTENT: code,
-            });
-
-            const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
             
-            // Update or push
-            if (existing) {
-                existing.review = review;
-                existing.error = null;
-            } else {
-                results.push({ file, language, review, error: null });
+            // Skip if not in the current process list
+            if (!filesToProcess.includes(file)) continue;
+
+            const absPath = path.join(CWD, file);
+            const language = detectLanguage(file);
+
+            // Check if already analyzed successfully in a previous resume
+            const existing = results.find(r => r.file === file);
+            if (opts.resume && existing && !existing.error && !isCleanup) {
+                console.log(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} ⏩ Skipped`);
+                filesToProcess = filesToProcess.filter(f => f !== file);
+                continue;
             }
-            console.log("✅");
-        } catch (err) {
-            console.log(`❌ ${err.message}`);
-            if (existing) {
-                existing.error = err.message;
-            } else {
-                results.push({ file, language, review: "", error: err.message });
+
+            process.stdout.write(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} `);
+
+            try {
+                const code = fs.readFileSync(absPath, "utf8");
+                const prompt = renderPrompt(promptTemplate, {
+                    PROJECT_NAME: projectName,
+                    FILE_PATH: file,
+                    LANGUAGE: language,
+                    FILE_CONTENT: code,
+                });
+
+                const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
+                
+                if (existing) {
+                    existing.review = review;
+                    existing.error = null;
+                } else {
+                    results.push({ file, language, review, error: null });
+                }
+                console.log("✅");
+            } catch (err) {
+                console.log(`❌ ${err.message}`);
+                if (existing) {
+                    existing.error = err.message;
+                } else {
+                    results.push({ file, language, review: "", error: err.message });
+                }
+                nextPassFiles.push(file); // Keep for next pass
             }
+
+            // Incremental save
+            const partialReport = generateReportContent(projectName, branch, files, results, false);
+            const currentReportFile = opts.output || "CODE_QUALITY_REPORT.md";
+            fs.writeFileSync(path.join(CWD, currentReportFile), partialReport, "utf8");
+            fs.writeFileSync(resumePath, JSON.stringify({ projectName, branch, results, timestamp: new Date().toISOString() }, null, 2), "utf8");
+
+            const delay = opts.delay || REQUEST_DELAY_MS;
+            if (i < files.length - 1) await new Promise(r => setTimeout(r, delay));
         }
 
-        // Incremental save (Markdown/JSON/State)
-        const partialReport = generateReportContent(projectName, branch, files, results, false);
-        const currentReportFile = opts.output || "CODE_QUALITY_REPORT.md";
-        fs.writeFileSync(path.join(CWD, currentReportFile), partialReport, "utf8");
-        
-        // Save resume state
-        fs.writeFileSync(resumePath, JSON.stringify({ projectName, branch, results, timestamp: new Date().toISOString() }, null, 2), "utf8");
-
-        const delay = opts.delay || REQUEST_DELAY_MS;
-        if (i < files.length - 1) await new Promise(r => setTimeout(r, delay));
+        filesToProcess = nextPassFiles;
+        pass++;
     }
 
     // ── Final Generate report ──────────────────────────────────────────
