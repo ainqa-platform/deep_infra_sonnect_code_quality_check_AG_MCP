@@ -220,8 +220,8 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
                 throw new Error("API Key is invalid or unauthorized (401).");
             }
 
-            if (response.status === 400 && text.includes("Input too long")) {
-                throw new Error(`File is too large for the model's context window.`);
+            if (response.status === 400 && (text.includes("Input too long") || text.includes("context_length_exceeded"))) {
+                throw new Error("TOKEN_LIMIT_EXCEEDED");
             }
 
             if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
@@ -253,6 +253,40 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
         }
         throw err;
     }
+}
+
+async function reviewLargeFile(projectName, filePath, language, code, promptTemplate, maxRetries) {
+    console.log(" (switching to chunked mode)... ");
+    
+    // Split into chunks of ~50k characters (safe for most contexts)
+    const chunkSize = 50000;
+    const chunks = [];
+    for (let i = 0; i < code.length; i += chunkSize) {
+        chunks.push(code.substring(i, i + chunkSize));
+    }
+
+    let mergedReview = `### 📦 Large File Audit (${chunks.length} chunks)\n\nThis file was analyzed in segments due to its size.\n\n`;
+
+    for (let i = 0; i < chunks.length; i++) {
+        process.stdout.write(`    └ Chunk ${i + 1}/${chunks.length} `);
+        const chunkPrompt = renderPrompt(promptTemplate, {
+            PROJECT_NAME: projectName,
+            FILE_PATH: `${filePath} (Part ${i + 1}/${chunks.length})`,
+            LANGUAGE: language,
+            FILE_CONTENT: chunks[i],
+        });
+
+        try {
+            const review = await callDeepInfra(chunkPrompt, maxRetries);
+            mergedReview += `#### Part ${i + 1}\n${review}\n\n---\n\n`;
+            console.log("✅");
+        } catch (err) {
+            console.log(`❌ ${err.message}`);
+            mergedReview += `#### Part ${i + 1}\n❌ Analysis failed: ${err.message}\n\n---\n\n`;
+        }
+    }
+
+    return mergedReview;
 }
 
 // ── Report Generation ──────────────────────────────────────────────────────
@@ -456,7 +490,16 @@ async function cmdRun(opts) {
                     FILE_CONTENT: code,
                 });
 
-                const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
+                let review;
+                try {
+                    review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
+                } catch (err) {
+                    if (err.message === "TOKEN_LIMIT_EXCEEDED") {
+                        review = await reviewLargeFile(projectName, file, language, code, promptTemplate, opts.retries || MAX_RETRIES);
+                    } else {
+                        throw err;
+                    }
+                }
                 
                 if (existing) {
                     existing.review = review;
