@@ -9,11 +9,6 @@
  *            (edit PROMPT.md)         → Customize the review criteria
  * 
  *   Step 2:  diq run                 → Analyzes files, fills in the report
- * 
- * Commands:
- *   init    [--prompt <template>] [--extensions <list>]
- *   run     [--max-files <n>] [--extensions <list>]
- *   help
  */
 
 import fs from "fs";
@@ -55,9 +50,7 @@ if (!process.env.DEEPINFRA_API_KEY) {
                 if (!process.env.DEEPINFRA_MODEL) process.env.DEEPINFRA_MODEL = serverConfig.env.DEEPINFRA_MODEL;
                 if (!process.env.DEEPINFRA_BASE_URL) process.env.DEEPINFRA_BASE_URL = serverConfig.env.DEEPINFRA_BASE_URL;
             }
-        } catch (e) {
-            // Silently ignore config parse errors
-        }
+        } catch (e) { /* Silently ignore config parse errors */ }
     }
 }
 
@@ -120,22 +113,19 @@ function getBuiltinTemplate(name) {
         return fs.readFileSync(templatePath, "utf8");
     }
 
-    // Check if it's an absolute/relative path
     const absPath = path.resolve(name);
     if (fs.existsSync(absPath)) {
         return fs.readFileSync(absPath, "utf8");
     }
 
-    // Fall back to default
     console.warn(`⚠️  Template '${name}' not found, using default.`);
-    console.warn(`   Available: default, security, infrastructure`);
     return fs.readFileSync(path.join(MCP_ROOT, "prompts", "default.md"), "utf8");
 }
 
 function renderPrompt(template, placeholders) {
     let rendered = template;
     for (const [key, value] of Object.entries(placeholders)) {
-        rendered = rendered.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+        rendered = rendered.split(`{{${key}}}`).join(value);
     }
     return rendered;
 }
@@ -145,8 +135,6 @@ function renderPrompt(template, placeholders) {
 function discoverFiles(repoPath, extensions, maxFiles) {
     const exts = extensions.split(",").map(e => e.trim().replace(/^\./, ""));
     const files = [];
-
-    // Skip audit artifacts
     const skipFiles = ["PROMPT.md", "CODE_QUALITY_REPORT.md", "package-lock.json"];
 
     try {
@@ -202,6 +190,9 @@ function walkDir(baseDir, currentDir, exts, files, maxFiles, skipFiles) {
 // ── DeepInfra API ──────────────────────────────────────────────────────────
 
 async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
     try {
         const response = await fetch(`${DEEPINFRA_BASE_URL}/chat/completions`, {
             method: "POST",
@@ -213,17 +204,22 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
                 model: DEEPINFRA_MODEL,
                 messages: [{ role: "user", content: prompt }],
             }),
+            signal: controller.signal,
         });
+
+        clearTimeout(timeout);
 
         if (!response.ok) {
             const text = await response.text();
 
-            // Special handling for "Input too long" - no point in retrying
-            if (response.status === 400 && text.includes("Input too long")) {
-                throw new Error(`File is too large for the model's context window. (Try reducing MAX_FILE_SIZE_KB)`);
+            if (response.status === 401) {
+                throw new Error("API Key is invalid or unauthorized (401).");
             }
 
-            // Handle rate limiting (429) or server errors (5xx) with exponential backoff
+            if (response.status === 400 && text.includes("Input too long")) {
+                throw new Error(`File is too large for the model's context window.`);
+            }
+
             if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
                 const backoff = Math.pow(2, retryCount) * 2000;
                 process.stdout.write(`(retry ${retryCount + 1}/${maxRetries} in ${backoff}ms)... `);
@@ -236,7 +232,15 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
         const json = await response.json();
         return json.choices?.[0]?.message?.content || "No response from DeepInfra.";
     } catch (err) {
-        // Handle network errors (like "fetch failed") with retries
+        clearTimeout(timeout);
+        if (err.name === 'AbortError') {
+            if (retryCount < maxRetries) {
+                process.stdout.write(`(timeout retry ${retryCount + 1}/${maxRetries})... `);
+                return callDeepInfra(prompt, maxRetries, retryCount + 1);
+            }
+            throw new Error("Request timed out after 60 seconds.");
+        }
+
         if (retryCount < maxRetries) {
             const backoff = Math.pow(2, retryCount) * 2000;
             process.stdout.write(`(network retry ${retryCount + 1}/${maxRetries} in ${backoff}ms)... `);
@@ -247,121 +251,102 @@ async function callDeepInfra(prompt, maxRetries = MAX_RETRIES, retryCount = 0) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMAND: init
-// ═══════════════════════════════════════════════════════════════════════════
+// ── Report Generation ──────────────────────────────────────────────────────
+
+function generateReportContent(projectName, branch, files, results, isComplete = false) {
+    const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+    const succeeded = results.filter(r => r && !r.error).length;
+    const failed = results.filter(r => r && r.error).length;
+
+    let report = `# 📋 Code Quality Audit Report\n\n`;
+    report += `> **Project:** ${projectName}\n`;
+    report += `> **Repository:** \`${CWD}\`\n`;
+    report += `> **Branch:** \`${branch}\`\n`;
+    report += `> **Model:** \`${DEEPINFRA_MODEL}\`\n`;
+    report += `> **Files Analyzed:** ${succeeded} / ${files.length}\n`;
+    report += `> **Updated:** ${now} UTC\n`;
+    report += `> **Status:** ${isComplete ? "✅ Complete" : "⏳ In Progress..."}\n\n`;
+    report += `---\n\n## Files Reviewed\n\n| # | File | Language | Status |\n|---|------|----------|--------|\n`;
+
+    for (let i = 0; i < files.length; i++) {
+        const r = results[i];
+        let status = "⏳ Pending";
+        if (r) {
+            status = r.error ? "❌ Error" : "✅ Reviewed";
+        }
+        report += `| ${i + 1} | \`${files[i]}\` | ${detectLanguage(files[i])} | ${status} |\n`;
+    }
+
+    report += `\n---\n\n`;
+
+    for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (!r) continue;
+        report += `## ${i + 1}. \`${r.file}\`\n\n`;
+        report += `> **Language:** ${r.language}\n\n`;
+        if (r.error) {
+            report += `> ❌ **Analysis failed:** ${r.error}\n\n`;
+        } else {
+            report += r.review + "\n\n";
+        }
+        report += "---\n\n";
+    }
+
+    if (isComplete) {
+        const criticals = results.filter(r => r && r.review.includes("🔴")).length;
+        const highs = results.filter(r => r && r.review.includes("🟠")).length;
+        const mediums = results.filter(r => r && r.review.includes("🟡")).length;
+        const lows = results.filter(r => r && r.review.includes("🟢")).length;
+
+        report += `## 📊 Audit Summary\n\n`;
+        report += `| Metric | Value |\n|--------|-------|\n`;
+        report += `| Total files scanned | ${files.length} |\n`;
+        report += `| Successfully reviewed | ${succeeded} |\n`;
+        report += `| Failed | ${failed} |\n`;
+        report += `| 🔴 Files with critical issues | ${criticals} |\n`;
+        report += `| 🟠 Files with high issues | ${highs} |\n`;
+        report += `| 🟡 Files with medium issues | ${mediums} |\n`;
+        report += `| 🟢 Files with low/info issues | ${lows} |\n\n`;
+        report += `---\n\n*Generated by [DeepInfra Code Quality MCP](https://github.com/ainqa-platform/deep_infra_sonnect_code_quality_check_AG_MCP) on ${now} UTC*\n`;
+    }
+
+    return report;
+}
+
+// ── Commands ───────────────────────────────────────────────────────────────
 
 function cmdInit(opts) {
     const projectName = path.basename(CWD);
-
     console.log("\n╔══════════════════════════════════════════════════╗");
     console.log("║   📁 Code Quality Audit — Initialize             ║");
     console.log("╚══════════════════════════════════════════════════╝\n");
-    console.log(`  Project:  ${projectName}`);
-    console.log(`  Path:     ${CWD}\n`);
 
-    // Discover files to show in the report skeleton
     const files = discoverFiles(CWD, opts.extensions, opts.maxFiles);
 
-    // ── Create PROMPT.md ───────────────────────────────────────────────
-    if (fs.existsSync(PROMPT_FILE)) {
-        console.log(`  ⚠️  PROMPT.md already exists — skipping (delete it to regenerate)`);
-    } else {
+    if (!fs.existsSync(PROMPT_FILE)) {
         const template = getBuiltinTemplate(opts.promptTemplate);
-        const promptContent = `<!-- 
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  EDIT THIS FILE to customize your code quality review.      ║
-  ║                                                              ║
-  ║  Placeholders (auto-replaced at runtime):                    ║
-  ║    {{PROJECT_NAME}}  → ${projectName.padEnd(40)}║
-  ║    {{FILE_PATH}}     → relative path to each file            ║
-  ║    {{LANGUAGE}}      → detected language (yaml, python, etc) ║
-  ║    {{REVIEW_TYPE}}   → name of this review                   ║
-  ║    {{FILE_CONTENT}}  → full file contents (auto-injected)    ║
-  ║                                                              ║
-  ║  After editing, run:  diq run                                ║
-  ╚══════════════════════════════════════════════════════════════╝
--->
-
-${template}`;
-
+        const promptContent = `<!-- \n  Placeholders: {{PROJECT_NAME}}, {{FILE_PATH}}, {{LANGUAGE}}, {{FILE_CONTENT}}\n-->\n\n${template}`;
         fs.writeFileSync(PROMPT_FILE, promptContent, "utf8");
-        console.log(`  ✅ Created PROMPT.md — edit this to customize your review criteria`);
+        console.log(`  ✅ Created PROMPT.md`);
     }
 
-    // ── Create CODE_QUALITY_REPORT.md skeleton ─────────────────────────
-    if (fs.existsSync(REPORT_FILE)) {
-        console.log(`  ⚠️  CODE_QUALITY_REPORT.md already exists — skipping (delete it to regenerate)`);
-    } else {
-        const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-        let branch = "unknown";
-        try {
-            branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: CWD, encoding: "utf8" }).trim();
-        } catch { /* not a git repo */ }
-
-        let report = `# 📋 Code Quality Audit Report
-
-> **Project:** ${projectName}
-> **Repository:** \`${CWD}\`
-> **Branch:** \`${branch}\`
-> **Model:** \`${DEEPINFRA_MODEL}\`
-> **Files to Analyze:** ${files.length}
-> **Initialized:** ${now} UTC
-> **Status:** ⏳ Pending — run \`diq run\` to fill this report
-
----
-
-## Files Queued for Review
-
-| # | File | Language | Status |
-|---|------|----------|--------|
-${files.map((f, i) => `| ${i + 1} | \`${f}\` | ${detectLanguage(f)} | ⏳ Pending |`).join("\n")}
-
----
-
-<!-- 
-  The sections below will be auto-generated when you run: diq run
-  Each file will get its own section with the DeepInfra analysis.
--->
-
-`;
-
-        fs.writeFileSync(REPORT_FILE, report, "utf8");
-        console.log(`  ✅ Created CODE_QUALITY_REPORT.md — will be filled when you run 'diq run'`);
+    if (!fs.existsSync(REPORT_FILE)) {
+        const initialReport = generateReportContent(projectName, "unknown", files, [], false);
+        fs.writeFileSync(REPORT_FILE, initialReport, "utf8");
+        console.log(`  ✅ Created CODE_QUALITY_REPORT.md`);
     }
 
-    // ── Summary ────────────────────────────────────────────────────────
-    console.log(`\n  📂 Files discovered: ${files.length}`);
-    if (files.length > 0) {
-        const shown = files.slice(0, 10);
-        shown.forEach((f, i) => console.log(`     ${i + 1}. ${f} (${detectLanguage(f)})`));
-        if (files.length > 10) console.log(`     ... and ${files.length - 10} more`);
-    }
-
-    console.log("\n╔══════════════════════════════════════════════════╗");
-    console.log("║  Next Steps:                                     ║");
-    console.log("║                                                   ║");
-    console.log("║  1. Edit PROMPT.md to customize review criteria   ║");
-    console.log("║  2. Run:  diq run                                 ║");
-    console.log("╚══════════════════════════════════════════════════╝\n");
+    console.log(`\n  📂 Files discovered: ${files.length}\n`);
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMAND: run
-// ═══════════════════════════════════════════════════════════════════════════
 
 async function cmdRun(opts) {
     const projectName = path.basename(CWD);
-
     console.log("\n╔══════════════════════════════════════════════════╗");
     console.log("║   🔬 Code Quality Audit — Running Analysis       ║");
     console.log("╚══════════════════════════════════════════════════╝\n");
 
-    // ── Validate prerequisites ─────────────────────────────────────────
     if (!DEEPINFRA_API_KEY) {
         console.error("❌ DEEPINFRA_API_KEY is not set.");
-        console.error("   Export it:  export DEEPINFRA_API_KEY=your-key-here");
-        console.error("   Or set in:  ~/.gemini/antigravity/mcp_config.json");
         process.exit(1);
     }
 
@@ -370,31 +355,16 @@ async function cmdRun(opts) {
         process.exit(1);
     }
 
-    // ── Load prompt ────────────────────────────────────────────────────
-    console.log("  📝 Loading PROMPT.md...");
     const promptTemplate = fs.readFileSync(PROMPT_FILE, "utf8");
-    console.log("  ✅ Prompt loaded\n");
-
-    // ── Discover files ─────────────────────────────────────────────────
-    console.log("  📂 Discovering files...");
     const files = discoverFiles(CWD, opts.extensions, opts.maxFiles);
     console.log(`  ✅ Found ${files.length} files to analyze\n`);
 
-    if (files.length === 0) {
-        console.log("  ⚠️  No files found. Check your --extensions option.");
-        process.exit(0);
-    }
-
-    // ── Get git info ───────────────────────────────────────────────────
     let branch = "unknown";
     try {
         branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: CWD, encoding: "utf8" }).trim();
     } catch { /* not a git repo */ }
 
-    // ── Analyze each file ──────────────────────────────────────────────
-    console.log("  🔬 Analyzing files...\n");
     const results = [];
-
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const absPath = path.join(CWD, file);
@@ -404,175 +374,53 @@ async function cmdRun(opts) {
 
         try {
             const code = fs.readFileSync(absPath, "utf8");
-
             const prompt = renderPrompt(promptTemplate, {
                 PROJECT_NAME: projectName,
                 FILE_PATH: file,
                 LANGUAGE: language,
-                REVIEW_TYPE: "custom",
                 FILE_CONTENT: code,
             });
 
             const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
             results.push({ file, language, review, error: null });
             console.log("✅");
-
-            // Rate limiting / Throttling
-            const delay = opts.delay || REQUEST_DELAY_MS;
-            if (i < files.length - 1) {
-                await new Promise(r => setTimeout(r, delay));
-            }
         } catch (err) {
-            console.log(`❌ ${err.message.substring(0, 60)}`);
+            console.log(`❌ ${err.message}`);
             results.push({ file, language, review: "", error: err.message });
         }
+
+        // Incremental save
+        const partialReport = generateReportContent(projectName, branch, files, results, false);
+        fs.writeFileSync(REPORT_FILE, partialReport, "utf8");
+
+        const delay = opts.delay || REQUEST_DELAY_MS;
+        if (i < files.length - 1) await new Promise(r => setTimeout(r, delay));
     }
 
-    // ── Generate report ────────────────────────────────────────────────
-    console.log("\n  📄 Generating CODE_QUALITY_REPORT.md...");
-
-    const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-    const succeeded = results.filter(r => !r.error).length;
-    const failed = results.filter(r => r.error).length;
-
-    let report = `# 📋 Code Quality Audit Report
-
-> **Project:** ${projectName}
-> **Repository:** \`${CWD}\`
-> **Branch:** \`${branch}\`
-> **Model:** \`${DEEPINFRA_MODEL}\`
-> **Files Analyzed:** ${succeeded} / ${files.length}
-> **Generated:** ${now} UTC
-> **Status:** ✅ Complete
-
----
-
-## Files Reviewed
-
-| # | File | Language | Status |
-|---|------|----------|--------|
-${results.map((r, i) => `| ${i + 1} | \`${r.file}\` | ${r.language} | ${r.error ? "❌ Error" : "✅ Reviewed"} |`).join("\n")}
-
----
-
-`;
-
-    // Add each file's review
-    for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        report += `## ${i + 1}. \`${r.file}\`\n\n`;
-        report += `> **Language:** ${r.language}\n\n`;
-
-        if (r.error) {
-            report += `> ❌ **Analysis failed:** ${r.error}\n\n`;
-        } else {
-            report += r.review + "\n\n";
-        }
-
-        report += "---\n\n";
-    }
-
-    // Add summary
-    const criticals = results.filter(r => r.review.includes("🔴")).length;
-    const highs = results.filter(r => r.review.includes("🟠")).length;
-    const mediums = results.filter(r => r.review.includes("🟡")).length;
-    const lows = results.filter(r => r.review.includes("🟢")).length;
-
-    report += `## 📊 Audit Summary
-
-| Metric | Value |
-|--------|-------|
-| Total files scanned | ${files.length} |
-| Successfully reviewed | ${succeeded} |
-| Failed | ${failed} |
-| 🔴 Files with critical issues | ${criticals} |
-| 🟠 Files with high issues | ${highs} |
-| 🟡 Files with medium issues | ${mediums} |
-| 🟢 Files with low/info issues | ${lows} |
-
----
-
-*Generated by [DeepInfra Code Quality MCP](https://github.com/ainqa-platform/deep_infra_sonnect_code_quality_check_AG_MCP) on ${now} UTC*
-`;
-
-    fs.writeFileSync(REPORT_FILE, report, "utf8");
-    console.log(`  ✅ Report saved to CODE_QUALITY_REPORT.md\n`);
-
-    // ── Final summary ──────────────────────────────────────────────────
-    console.log("╔══════════════════════════════════════════════════╗");
-    console.log("║               ✅ Audit Complete                  ║");
-    console.log("╠══════════════════════════════════════════════════╣");
-    console.log(`║  Analyzed:  ${String(succeeded).padEnd(37)}║`);
-    console.log(`║  Failed:    ${String(failed).padEnd(37)}║`);
-    console.log(`║  Report:    CODE_QUALITY_REPORT.md${" ".repeat(15)}║`);
-    console.log("╠══════════════════════════════════════════════════╣");
-    console.log("║  Next: review the report and fix the issues     ║");
-    console.log("║        git add . && git commit -m 'audit'       ║");
-    console.log("╚══════════════════════════════════════════════════╝\n");
+    console.log("\n  📄 Finalizing report...");
+    const finalReport = generateReportContent(projectName, branch, files, results, true);
+    fs.writeFileSync(REPORT_FILE, finalReport, "utf8");
+    console.log(`  ✅ Audit Complete!`);
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMMAND: help
-// ═══════════════════════════════════════════════════════════════════════════
 
 function cmdHelp() {
     console.log(`
-╔══════════════════════════════════════════════════════════╗
-║   DeepInfra Code Quality Audit CLI (diq)                 ║
-╚══════════════════════════════════════════════════════════╝
-
 Usage:  diq <command> [options]
 
 Commands:
-  init     Create PROMPT.md and CODE_QUALITY_REPORT.md in the current repo
-  run      Analyze files using your PROMPT.md and fill the report
+  init     Create PROMPT.md and CODE_QUALITY_REPORT.md
+  run      Analyze files and fill the report
   help     Show this help message
-
-Workflow:
-  1.  cd /path/to/your-repo
-  2.  git checkout -b code-quality-audit
-  3.  diq init                           ← creates PROMPT.md + report skeleton
-  4.  (edit PROMPT.md)                   ← customize the review criteria
-  5.  diq run                            ← runs analysis, fills the report
-  6.  git add . && git commit            ← commit the report
-
-Options for 'init':
-  --prompt <template>    Base template: default | security | infrastructure
-                         Or path to a custom .md file
-  --extensions <list>    Comma-separated extensions (default: ts,js,py,yml,...)
-
-Options for 'run':
-  --max-files <n>        Max files to analyze (default: 500)
-  --extensions <list>    Comma-separated extensions (default: ts,js,py,yml,...)
-  --delay <ms>           Delay between requests in ms (default: 800)
-  --retries <n>          Number of retries for failed requests (default: 3)
-
-Environment:
-  DEEPINFRA_API_KEY      Your DeepInfra API key (required for 'run')
-  DEEPINFRA_MODEL        Model to use (default: meta-llama/Meta-Llama-3.1-70B-Instruct)
-  DEEPINFRA_BASE_URL     API base URL
-  MAX_FILE_SIZE_KB       Skip files larger than this (default: 512)
 `);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MAIN
-// ═══════════════════════════════════════════════════════════════════════════
-
 async function main() {
     const opts = parseArgs();
-
     switch (opts.command) {
-        case "init":
-            cmdInit(opts);
-            break;
-        case "run":
-            await cmdRun(opts);
-            break;
+        case "init": cmdInit(opts); break;
+        case "run": await cmdRun(opts); break;
         case "help":
-        default:
-            cmdHelp();
-            break;
+        default: cmdHelp(); break;
     }
 }
 
