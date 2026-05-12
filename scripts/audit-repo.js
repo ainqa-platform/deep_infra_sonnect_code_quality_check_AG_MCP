@@ -101,6 +101,7 @@ function parseArgs() {
             case "--format": opts.format = args[++i]; break; // markdown | junit | json
             case "--output": opts.output = args[++i]; break;
             case "--fail-on": opts.failOn = args[++i]; break; // critical | high | medium | low
+            case "--resume": opts.resume = true; break;
             case "--help": opts.command = "help"; break;
         }
     }
@@ -403,10 +404,31 @@ async function cmdRun(opts) {
     } catch { /* not a git repo */ }
 
     const results = [];
+    const resumePath = path.join(CWD, ".diq_resume.json");
+
+    if (opts.resume && fs.existsSync(resumePath)) {
+        try {
+            const state = JSON.parse(fs.readFileSync(resumePath, "utf8"));
+            if (state.projectName === projectName && state.branch === branch) {
+                console.log(`  🔄 Resuming audit: loading ${state.results.length} previous results...`);
+                results.push(...state.results);
+            }
+        } catch (e) {
+            console.warn("  ⚠️  Failed to load resume state. Starting fresh.");
+        }
+    }
+
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const absPath = path.join(CWD, file);
         const language = detectLanguage(file);
+
+        // Check if already analyzed (and not an error)
+        const existing = results.find(r => r.file === file);
+        if (opts.resume && existing && !existing.error) {
+            console.log(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} ⏩ Skipped (already analyzed)`);
+            continue;
+        }
 
         process.stdout.write(`  [${String(i + 1).padStart(2)}/${files.length}] ${file} `);
 
@@ -420,16 +442,31 @@ async function cmdRun(opts) {
             });
 
             const review = await callDeepInfra(prompt, opts.retries || MAX_RETRIES);
-            results.push({ file, language, review, error: null });
+            
+            // Update or push
+            if (existing) {
+                existing.review = review;
+                existing.error = null;
+            } else {
+                results.push({ file, language, review, error: null });
+            }
             console.log("✅");
         } catch (err) {
             console.log(`❌ ${err.message}`);
-            results.push({ file, language, review: "", error: err.message });
+            if (existing) {
+                existing.error = err.message;
+            } else {
+                results.push({ file, language, review: "", error: err.message });
+            }
         }
 
-        // Incremental save
+        // Incremental save (Markdown/JSON/State)
         const partialReport = generateReportContent(projectName, branch, files, results, false);
-        fs.writeFileSync(REPORT_FILE, partialReport, "utf8");
+        const currentReportFile = opts.output || "CODE_QUALITY_REPORT.md";
+        fs.writeFileSync(path.join(CWD, currentReportFile), partialReport, "utf8");
+        
+        // Save resume state
+        fs.writeFileSync(resumePath, JSON.stringify({ projectName, branch, results, timestamp: new Date().toISOString() }, null, 2), "utf8");
 
         const delay = opts.delay || REQUEST_DELAY_MS;
         if (i < files.length - 1) await new Promise(r => setTimeout(r, delay));
@@ -451,6 +488,12 @@ async function cmdRun(opts) {
     }
 
     fs.writeFileSync(path.join(CWD, outputFile), finalContent, "utf8");
+    
+    // Clean up resume state on success
+    if (results.every(r => !r.error)) {
+        if (fs.existsSync(resumePath)) fs.unlinkSync(resumePath);
+    }
+
     console.log(`  ✅ Results saved to ${outputFile}\n`);
 
     // ── Quality Gate Logic ─────────────────────────────────────────────
@@ -489,6 +532,13 @@ Commands:
   init     Create PROMPT.md and CODE_QUALITY_REPORT.md
   run      Analyze files and fill the report
   help     Show this help message
+
+Options for 'run':
+  --resume               Skip already analyzed files from a previous run
+  --format <type>        markdown | junit | json (default: markdown)
+  --fail-on <level>      critical | high | medium | low
+  --output <file>        Custom report filename
+  --max-files <n>        Limit number of files
 `);
 }
 
