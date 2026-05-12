@@ -98,6 +98,9 @@ function parseArgs() {
             case "--max-files": opts.maxFiles = Number(args[++i]); break;
             case "--delay": opts.delay = Number(args[++i]); break;
             case "--retries": opts.retries = Number(args[++i]); break;
+            case "--format": opts.format = args[++i]; break; // markdown | junit | json
+            case "--output": opts.output = args[++i]; break;
+            case "--fail-on": opts.failOn = args[++i]; break; // critical | high | medium | low
             case "--help": opts.command = "help"; break;
         }
     }
@@ -313,6 +316,41 @@ function generateReportContent(projectName, branch, files, results, isComplete =
     return report;
 }
 
+function generateJUnitReport(projectName, files, results) {
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    xml += `<testsuites name="DeepInfra Code Quality Audit" tests="${files.length}" failures="${results.filter(r => r && r.error).length}">\n`;
+    xml += `  <testsuite name="${projectName}" tests="${files.length}">\n`;
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const r = results[i];
+        const className = file.replace(/\//g, ".");
+
+        if (!r) {
+            xml += `    <testcase className="${className}" name="${file}">\n`;
+            xml += `      <skipped message="Audit not performed" />\n`;
+            xml += `    </testcase>\n`;
+        } else if (r.error) {
+            xml += `    <testcase className="${className}" name="${file}">\n`;
+            xml += `      <failure message="Analysis Error">${r.error}</failure>\n`;
+            xml += `    </testcase>\n`;
+        } else {
+            const hasCritical = r.review.includes("🔴");
+            const hasHigh = r.review.includes("🟠");
+            
+            xml += `    <testcase className="${className}" name="${file}">\n`;
+            if (hasCritical || hasHigh) {
+                const severity = hasCritical ? "CRITICAL" : "HIGH";
+                xml += `      <failure message="${severity} Issues Found">${r.review.replace(/[<>&'"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','\'':'&apos;','"':'&quot;'}[c]))}</failure>\n`;
+            }
+            xml += `    </testcase>\n`;
+        }
+    }
+
+    xml += `  </testsuite>\n</testsuites>\n`;
+    return xml;
+}
+
 // ── Commands ───────────────────────────────────────────────────────────────
 
 function cmdInit(opts) {
@@ -397,10 +435,50 @@ async function cmdRun(opts) {
         if (i < files.length - 1) await new Promise(r => setTimeout(r, delay));
     }
 
-    console.log("\n  📄 Finalizing report...");
-    const finalReport = generateReportContent(projectName, branch, files, results, true);
-    fs.writeFileSync(REPORT_FILE, finalReport, "utf8");
-    console.log(`  ✅ Audit Complete!`);
+    // ── Final Generate report ──────────────────────────────────────────
+    console.log(`\n  📄 Finalizing results...`);
+    
+    const format = opts.format || "markdown";
+    const outputFile = opts.output || (format === "junit" ? "audit-report.xml" : (format === "json" ? "audit-report.json" : "CODE_QUALITY_REPORT.md"));
+
+    let finalContent = "";
+    if (format === "junit") {
+        finalContent = generateJUnitReport(projectName, files, results);
+    } else if (format === "json") {
+        finalContent = JSON.stringify({ projectName, branch, files, results, timestamp: new Date().toISOString() }, null, 2);
+    } else {
+        finalContent = generateReportContent(projectName, branch, files, results, true);
+    }
+
+    fs.writeFileSync(path.join(CWD, outputFile), finalContent, "utf8");
+    console.log(`  ✅ Results saved to ${outputFile}\n`);
+
+    // ── Quality Gate Logic ─────────────────────────────────────────────
+    if (opts.failOn) {
+        const severities = { "critical": ["🔴"], "high": ["🔴", "🟠"], "medium": ["🔴", "🟠", "🟡"], "low": ["🔴", "🟠", "🟡", "🟢"] };
+        const triggers = severities[opts.failOn.toLowerCase()] || ["🔴"];
+        
+        const failingFiles = results.filter(r => r && triggers.some(t => r.review.includes(t)));
+        if (failingFiles.length > 0) {
+            console.error(`❌ QUALITY GATE FAILED: Found ${failingFiles.length} files with ${opts.failOn} or higher issues.`);
+            process.exit(1);
+        }
+    }
+
+    const succeeded = results.filter(r => !r.error).length;
+    const failed = results.filter(r => r.error).length;
+
+    // ── Final summary ──────────────────────────────────────────────────
+    console.log("╔══════════════════════════════════════════════════╗");
+    console.log("║               ✅ Audit Complete                  ║");
+    console.log("╠══════════════════════════════════════════════════╣");
+    console.log(`║  Analyzed:  ${String(succeeded).padEnd(37)}║`);
+    console.log(`║  Failed:    ${String(failed).padEnd(37)}║`);
+    console.log(`║  Report:    ${outputFile.padEnd(28)}║`);
+    console.log("╠══════════════════════════════════════════════════╣");
+    console.log("║  Next: review the report and fix the issues     ║");
+    console.log("║        git add . && git commit -m 'audit'       ║");
+    console.log("╚══════════════════════════════════════════════════╝\n");
 }
 
 function cmdHelp() {
